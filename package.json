@@ -1,0 +1,16 @@
+{
+  "name": "browser-automation-agent",
+  "version": "1.0.0",
+  "description": "An agent that drives a real browser to complete tasks described in plain English — and lets you watch it work in real time.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "playwright": "^1.61.1"
+  }
+}
