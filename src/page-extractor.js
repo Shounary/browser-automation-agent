@@ -23,9 +23,11 @@ export async function extractInteractiveElements(page) {
         const role = await describeRole(h);
         const name = await accessibleName(h);
         const extra = (role === 'input') ? ` (${await inputType(h)})` : "";
+        const line = `[${id}] ${role} "${name}"${extra}`;
 
-        map.push(h)
-        lines.push(`[${id}] ${role} "${name}"${extra}`);
+        // Handles die on navigation
+        map.push({handle: h, line})
+        lines.push(line);
     }
 
     return {text: lines.join('\n'), map};
