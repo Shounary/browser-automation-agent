@@ -1,18 +1,13 @@
-// The action space as Gemini function declarations, plus the validator that
-// turns a raw function call back into an action `page-actions.js` can run.
+// The action space as Gemini function declarations
 //
-// Gemini has no strict-schema mode (the Anthropic API's `strict: true`), so
-// nothing guarantees the arguments match these declarations. Everything that
+// Gemini has no strict-schema mode (the Anthropic API's `strict: true`), everything that
 // crosses this boundary is checked by hand in `validateAction`.
 
 import { Type } from '@google/genai';
 
 const MAX_RESULT_LEN = 1200;
 
-// Every action carries a `reason`. This is not a seventh action — the action
-// space is still the six in SPEC.md — but SPEC 7 requires a rationale per step
-// for the timeline, and asking for it as an argument is far more reliable than
-// hoping for prose alongside a forced function call.
+// Every action carries a `reason`
 const reason = {
   type: Type.STRING,
   description: 'One short sentence: why this action, in service of the task.',
