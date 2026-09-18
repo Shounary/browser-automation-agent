@@ -90,3 +90,54 @@ test("returns empty text and map for a page with no controls", async () => {
   assert.equal(map.length, 0);
   assert.equal(text, "");
 });
+
+test("drops elements that have no usable name", async () => {
+  const { text, map } = await extractFrom(`
+    <button></button>
+    <button>Real</button>
+  `);
+
+  // A nameless control is not something the model can reason about, so it is
+  // left out rather than listed as [n] button "".
+  assert.equal(map.length, 1);
+  assert.equal(text, '[0] button "Real"');
+});
+
+test("names an icon link from the tail of its href", async () => {
+  const { text } = await extractFrom(`<a href="/wiki/Ada_Lovelace"><svg></svg></a>`);
+
+  assert.equal(text, '[0] link "Ada_Lovelace"');
+});
+
+test("hides off-screen elements unless viewportOnly is disabled", async () => {
+  const html = `
+    <a href="/top">Top</a>
+    <div style="height:4000px"></div>
+    <a href="/bottom">Bottom</a>
+  `;
+
+  await page.setContent(html, { waitUntil: "domcontentloaded" });
+  const visible = await extractInteractiveElements(page);
+  const all = await extractInteractiveElements(page, { viewportOnly: false });
+
+  assert.equal(visible.text, '[0] link "Top"');
+  assert.equal(all.map.length, 2);
+});
+
+test("reports url and title alongside the elements", async () => {
+  const { url, title } = await extractFrom(`<title>A Page</title><button>Go</button>`);
+
+  assert.equal(title, "A Page");
+  assert.ok(url.startsWith("about:") || url.startsWith("http"));
+});
+
+test("reads page text without the surrounding nav chrome", async () => {
+  const { pageText } = await extractFrom(`
+    <main>
+      <nav>Article Talk Read Edit</nav>
+      <p>Ada Lovelace was a mathematician.</p>
+    </main>
+  `);
+
+  assert.equal(pageText, "Ada Lovelace was a mathematician.");
+});
