@@ -11,10 +11,11 @@ import { GoogleGenAI, FunctionCallingConfigMode } from '@google/genai';
 import { ACTION_DECLARATIONS, ACTION_NAMES, validateAction } from './action-schema.js';
 
 // Comma-separated; first is preferred, the rest are fallbacks.
-const MODEL_CHAIN = (process.env.GEMINI_MODEL ?? 'gemini-3.8-flash,gemini-2.5-flash')
+const MODEL_CHAIN = (process.env.GEMINI_MODEL ??
+  'gemini-3.8-flash,gemini-3.7-flash,gemini-3.5-flash,gemini-2.5-flash,gemini-3.5-flash-lite,gemini-2.5-flash-lite')
   .split(',').map(m => m.trim()).filter(Boolean);
 const SCHEMA_RETRIES = 2;     // malformed arguments
-const TRANSIENT_RETRIES = 2;  // per model, before dropping to the next
+const TRANSIENT_RETRIES = 1;  // per model, before dropping to the next
 const BACKOFF_BASE_MS = 2000;
 const BACKOFF_MAX_MS = 20_000;
 
