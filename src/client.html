@@ -1,0 +1,83 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>agent stream</title>
+<style>
+  body { font: 14px/1.5 ui-monospace, monospace; margin: 0; display: grid;
+         grid-template-columns: 1fr 420px; height: 100vh; background: #111; color: #ddd; }
+  #left { padding: 12px; overflow: hidden; display: flex; flex-direction: column; gap: 8px; }
+  #shot { width: 100%; border: 1px solid #333; background: #000; }
+  #right { border-left: 1px solid #333; padding: 12px; overflow-y: auto; }
+  input, button { font: inherit; padding: 6px; background: #222; color: #ddd; border: 1px solid #444; }
+  input { flex: 1; }
+  .row { display: flex; gap: 6px; }
+  .ev { border-bottom: 1px solid #222; padding: 6px 0; }
+  .observe { color: #7aa2f7; } .action { color: #e0af68; } .ok { color: #9ece6a; }
+  .fail { color: #f7768e; } .done { color: #9ece6a; font-weight: bold; } .gave_up { color: #f7768e; font-weight: bold; }
+  .why { color: #888; }
+</style>
+
+<div id="left">
+  <div class="row">
+    <input id="task" placeholder="who was Ada Lovelace" value="who was Ada Lovelace">
+    <button id="start">Start</button>
+    <button id="stop">Stop</button>
+  </div>
+  <div id="status">connecting…</div>
+  <img id="shot" alt="live view">
+</div>
+<div id="right"><b>timeline</b><div id="log"></div></div>
+
+<script>
+  const ws = new WebSocket(`ws://${location.host}`);
+  const $ = id => document.getElementById(id);
+
+  const add = (cls, html) => {
+    const el = document.createElement('div');
+    el.className = `ev ${cls}`;
+    el.innerHTML = html;
+    $('log').append(el);
+    el.scrollIntoView({ block: 'end' });
+  };
+
+  const esc = s => String(s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+
+  const describe = a => ({
+    navigate: () => `navigate ${esc(a.url)}`,
+    click:    () => `click [${a.id}]`,
+    type:     () => `type "${esc(a.text)}" into [${a.id}]`,
+    scroll:   () => `scroll ${a.direction}`,
+  }[a.name]?.() ?? a.name);
+
+  ws.onopen  = () => $('status').textContent = 'connected — idle';
+  ws.onclose = () => $('status').textContent = 'disconnected';
+
+  ws.onmessage = ({ data }) => {
+    const e = JSON.parse(data);
+    switch (e.type) {
+      case 'status':
+        $('status').textContent = e.status === 'running'
+          ? `running: ${e.task}  [${e.model}]`
+          : `${e.status}${e.result ? ' — ' + e.result : ''}${e.reason ? ' — ' + e.reason : ''}`;
+        break;
+      case 'observe':
+        if (e.screenshot) $('shot').src = `data:image/jpeg;base64,${e.screenshot}`;
+        add('observe', `<b>step ${e.step}</b> — ${e.elements} elements — ${esc(e.title || e.url)}`);
+        break;
+      case 'action':
+        add('action', `${describe(e.action)}<div class="why">${esc(e.action.reason)}</div>`);
+        break;
+      case 'result':
+        add(e.ok ? 'ok' : 'fail', `${e.ok ? 'ok' : 'FAIL'} ${esc(e.message)}`);
+        break;
+      case 'done':    add('done', `DONE — ${esc(e.result)}`); break;
+      case 'gave_up': add('gave_up', `GAVE UP — ${esc(e.reason)}`); break;
+      case 'error':   add('fail', esc(e.message)); break;
+    }
+  };
+
+  $('start').onclick = () => {
+    $('log').innerHTML = '';
+    ws.send(JSON.stringify({ type: 'start', task: $('task').value }));
+  };
+  $('stop').onclick = () => ws.send(JSON.stringify({ type: 'stop' }));
+</script>

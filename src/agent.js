@@ -9,6 +9,7 @@ export const MAX_STEPS = 15;
 // backs off rather than failing the run.
 export const RUN_TIMEOUT_MS = 300_000;
 const HISTORY_WINDOW = 8;
+const SCREENSHOT = { type: 'jpeg', quality: 55 };
 
 // SPEC 9/10: navigate is restricted to the curated demo targets
 export const ALLOWED_DOMAINS = [
@@ -26,21 +27,33 @@ export async function runTask({
   timeoutMs = RUN_TIMEOUT_MS,
   allowedDomains = ALLOWED_DOMAINS,
   onEvent = () => {},
+  screenshots = false,
+  isCancelled = () => false,
 }) {
   const deadline = Date.now() + timeoutMs;
   const history = [];
 
   for (let step = 0; step < maxSteps; step++) {
+    if (isCancelled()) return gaveUp('stopped', step, onEvent);
     if (Date.now() > deadline) {
       return gaveUp(`run timeout reached after ${step} steps`, step, onEvent);
     }
 
     // Re-extract every iteration. Never reuse a map across actions.
     const state = await extractInteractiveElements(page);
-    onEvent({ type: 'observe', step, url: state.url, title: state.title, elements: state.map.length });
+    onEvent({
+      type: 'observe',
+      step,
+      url: state.url,
+      title: state.title,
+      elements: state.map.length,
+      screenshot: screenshots ? await capture(page) : undefined,
+    });
 
     const { action, error } = await llm.chooseAction(task, state, history.slice(-HISTORY_WINDOW));
     if (error) return gaveUp(error, step, onEvent);
+    // The model call is the slow part; a stop pressed during it lands here.
+    if (isCancelled()) return gaveUp('stopped', step, onEvent);
 
     onEvent({ type: 'action', step, action });
 
@@ -58,6 +71,10 @@ export async function runTask({
   }
 
   return gaveUp(`step limit reached (${maxSteps} steps)`, maxSteps, onEvent);
+}
+
+async function capture(page) {
+  return page.screenshot(SCREENSHOT).then(b => b.toString('base64')).catch(() => undefined);
 }
 
 function gaveUp(reason, steps, onEvent) {
