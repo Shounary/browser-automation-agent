@@ -27,7 +27,7 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 const popups = await suppressPopups(page.context(), page);
 
 console.log(`task:  ${task}`);
-console.log(`model: ${llm.model}\n`);
+console.log(`model: ${llm.models.join(' -> ')}\n`);
 
 const run = await runTask({ task, page, llm, popups, onEvent: log });
 

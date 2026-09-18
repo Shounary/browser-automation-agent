@@ -10,9 +10,11 @@
 import { GoogleGenAI, FunctionCallingConfigMode } from '@google/genai';
 import { ACTION_DECLARATIONS, ACTION_NAMES, validateAction } from './action-schema.js';
 
-const DEFAULT_MODEL = process.env.GEMINI_MODEL ?? 'gemini-3.8-flash';
+// Comma-separated; first is preferred, the rest are fallbacks.
+const MODEL_CHAIN = (process.env.GEMINI_MODEL ?? 'gemini-3.8-flash,gemini-2.5-flash')
+  .split(',').map(m => m.trim()).filter(Boolean);
 const SCHEMA_RETRIES = 2;     // malformed arguments
-const TRANSIENT_RETRIES = 5;  // free-tier RPM, and capacity 503s
+const TRANSIENT_RETRIES = 2;  // per model, before dropping to the next
 const BACKOFF_BASE_MS = 2000;
 const BACKOFF_MAX_MS = 20_000;
 
@@ -38,18 +40,40 @@ Rules:
   \`result\`, written for someone who never saw the page. If the task turns out
   to be impossible from here, call done and say so in \`result\`.`;
 
-export function createGeminiClient({ model = DEFAULT_MODEL, apiKey } = {}) {
-  if (!apiKey && !process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
+// `client` and `backoffBaseMs` exist so tests can drive the fallback without
+// waiting on a real outage.
+export function createGeminiClient({
+  models = MODEL_CHAIN,
+  apiKey,
+  client,
+  backoffBaseMs = BACKOFF_BASE_MS,
+} = {}) {
+  if (!client && !apiKey && !process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
     throw new Error(
       'No Gemini API key. Get a free one at https://aistudio.google.com/apikey ' +
       'and run: export GEMINI_API_KEY="..."'
     );
   }
 
-  const ai = new GoogleGenAI(apiKey ? { apiKey } : {});
+  const ai = client ?? new GoogleGenAI(apiKey ? { apiKey } : {});
+
+  // Sticky: a run drops down the chain but never climbs back up.
+  let active = 0;
+
+  const call = async request => {
+    for (; ; active++) {
+      try {
+        return await callWithBackoff(ai, models[active], request, backoffBaseMs);
+      } catch (err) {
+        if (!transientReason(err) || active === models.length - 1) throw err;
+        console.error(`  ${models[active]} unavailable — falling back to ${models[active + 1]}`);
+      }
+    }
+  };
 
   return {
-    model,
+    models,
+    get model() { return models[active]; },
 
     async chooseAction(task, state, history) {
       const corrections = [];
@@ -57,7 +81,7 @@ export function createGeminiClient({ model = DEFAULT_MODEL, apiKey } = {}) {
       for (let attempt = 0; attempt <= SCHEMA_RETRIES; attempt++) {
         let response;
         try {
-          response = await callWithBackoff(ai, model, {
+          response = await call({
             contents: buildPrompt(task, state, history, corrections),
             config: {
               systemInstruction: SYSTEM_INSTRUCTION,
@@ -74,21 +98,21 @@ export function createGeminiClient({ model = DEFAULT_MODEL, apiKey } = {}) {
         } catch (err) {
           // Out of retries, or something not worth retrying. The run ends
           // with a message instead of a stack trace.
-          return { error: `${model} unreachable: ${String(err?.message ?? err).slice(0, 200)}` };
+          return { error: `${models[active]} unreachable: ${String(err?.message ?? err).slice(0, 200)}` };
         }
 
         // ANY mode forces a function call, but it does not cap the count at
         // one. The first call is the step; anything after it is discarded.
-        const call = response.functionCalls?.[0];
-        if (!call) {
+        const fnCall = response.functionCalls?.[0];
+        if (!fnCall) {
           corrections.push('You replied without calling a function. Call exactly one.');
           continue;
         }
 
-        const { action, error } = validateAction(call, { elementCount: state.map.length });
+        const { action, error } = validateAction(fnCall, { elementCount: state.map.length });
         if (action) return { action };
 
-        corrections.push(`Your call to ${call.name} was rejected: ${error}`);
+        corrections.push(`Your call to ${fnCall.name} was rejected: ${error}`);
       }
 
       return { error: `model produced no valid action in ${SCHEMA_RETRIES + 1} attempts: ${corrections.at(-1)}` };
@@ -128,10 +152,8 @@ function buildPrompt(task, state, history, corrections) {
   return parts.join('\n');
 }
 
-// The free tier is rate limited per minute, and a 15-step run is 15 calls in
-// under a minute. Free-tier capacity also returns 503 under load. Either one
-// kills a demo mid-run if it is not retried.
-async function callWithBackoff(ai, model, request) {
+// Free-tier 429s and capacity 503s both kill a run if they are not retried.
+async function callWithBackoff(ai, model, request, backoffBaseMs) {
   for (let attempt = 0; ; attempt++) {
     try {
       return await ai.models.generateContent({ model, ...request });
@@ -139,7 +161,7 @@ async function callWithBackoff(ai, model, request) {
       const reason = transientReason(err);
       if (attempt >= TRANSIENT_RETRIES || !reason) throw err;
 
-      const delay = Math.round(Math.min(BACKOFF_BASE_MS * 2 ** attempt, BACKOFF_MAX_MS) * (1 + Math.random()));
+      const delay = Math.round(Math.min(backoffBaseMs * 2 ** attempt, BACKOFF_MAX_MS) * (1 + Math.random()));
       console.error(`  ${reason}, retrying in ${delay / 1000}s`);
       await new Promise(r => setTimeout(r, delay));
     }
