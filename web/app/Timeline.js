@@ -50,7 +50,9 @@ function Event({ event }) {
       return <li className="final done"><strong>Done</strong> — {event.result}</li>;
 
     case 'gave_up':
-      return <li className="final gave-up"><strong>Gave up</strong> — {event.reason}</li>;
+      return event.kind === 'stopped'
+        ? <li className="final stopped"><strong>Stopped</strong> — {event.reason}</li>
+        : <li className="final gave-up"><strong>Gave up</strong> — {event.reason}</li>;
 
     case 'error':
       return <li className="fail">{event.message}</li>;

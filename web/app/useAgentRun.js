@@ -11,7 +11,10 @@ export function useAgentRun() {
   const retry = useRef(null);
 
   const [connected, setConnected] = useState(false);
-  const [status, setStatus] = useState('idle');
+  const [status, setStatusState] = useState('idle');
+  // Mirror for the socket callbacks, which close over the first render.
+  const statusRef = useRef('idle');
+  const setStatus = useCallback(s => { statusRef.current = s; setStatusState(s); }, []);
   const [meta, setMeta] = useState(null);
   const [events, setEvents] = useState([]);
   const [screenshot, setScreenshot] = useState(null);
@@ -28,6 +31,11 @@ export function useAgentRun() {
 
       ws.onclose = () => {
         setConnected(false);
+        // The run died with the server; don't leave the UI spinning.
+        if (statusRef.current === 'running' || statusRef.current === 'stopping') {
+          setOutcome({ kind: 'disconnected', text: 'The backend went away mid-run.' });
+          setStatus('gave_up');
+        }
         if (!closed) retry.current = setTimeout(connect, RECONNECT_MS);
       };
 
@@ -43,8 +51,8 @@ export function useAgentRun() {
         if (event.type === 'observe' && event.screenshot) {
           setScreenshot(`data:image/jpeg;base64,${event.screenshot}`);
         }
-        if (event.type === 'done') setOutcome({ ok: true, text: event.result });
-        if (event.type === 'gave_up') setOutcome({ ok: false, text: event.reason });
+        if (event.type === 'done') setOutcome({ kind: 'done', text: event.result });
+        if (event.type === 'gave_up') setOutcome({ kind: event.kind ?? 'crash', text: event.reason, steps: event.steps });
 
         // Screenshots are big; keep them out of the timeline's state.
         const { screenshot: _drop, ...rest } = event;
@@ -58,7 +66,7 @@ export function useAgentRun() {
       clearTimeout(retry.current);
       socket.current?.close();
     };
-  }, []);
+  }, [setStatus]);
 
   const start = useCallback(task => {
     if (!task.trim() || socket.current?.readyState !== WebSocket.OPEN) return;
@@ -67,11 +75,14 @@ export function useAgentRun() {
     setOutcome(null);
     setStatus('running');
     socket.current.send(JSON.stringify({ type: 'start', task }));
-  }, []);
+  }, [setStatus]);
 
+  // Optimistic: the server's final status event replaces 'stopping'.
   const stop = useCallback(() => {
-    socket.current?.send(JSON.stringify({ type: 'stop' }));
-  }, []);
+    if (socket.current?.readyState !== WebSocket.OPEN) return;
+    setStatus('stopping');
+    socket.current.send(JSON.stringify({ type: 'stop' }));
+  }, [setStatus]);
 
   return { connected, status, meta, events, screenshot, outcome, start, stop };
 }

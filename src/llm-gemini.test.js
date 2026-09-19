@@ -8,13 +8,17 @@ const STATE = { map: [{ line: '[0] button "Go"' }], text: '[0] button "Go"', url
 function fakeClient(behaviour, log = []) {
   return {
     models: {
-      async generateContent({ model }) {
+      async generateContent({ model, config }) {
         log.push(model);
         const act = behaviour[model];
         if (act === "ok") {
           return { functionCalls: [{ name: "click", args: { id: 0, reason: "r" } }] };
         }
-        const message = act === 503 ? "high demand" : `model ${model} not found`;
+        // Like the real SDK: only the abort signal can end it.
+        if (act === "hang") return new Promise((_, reject) => {
+          config.abortSignal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        });
+        const message = act === 503 ? "high demand" : act === 429 ? "quota exceeded" : `model ${model} not found`;
         throw Object.assign(new Error(message), { status: act });
       },
     },
@@ -68,4 +72,45 @@ test("does not fall back on a non-transient error", async () => {
   // A bad model name should surface, not be papered over by the fallback.
   assert.match(error, /busy-model unreachable/);
   assert.ok(!log.includes("spare-model"), "fell back on a non-transient error");
+});
+
+test("labels an exhausted chain of 429s as quota", async () => {
+  const llm = createGeminiClient(opts({ "busy-model": 429, "spare-model": 429 }));
+
+  const { kind } = await llm.chooseAction("task", STATE, []);
+
+  assert.equal(kind, "quota");
+});
+
+test("labels other failures as model errors", async () => {
+  const llm = createGeminiClient(opts({ "busy-model": 404 }));
+
+  const { kind } = await llm.chooseAction("task", STATE, []);
+
+  assert.equal(kind, "model");
+});
+
+test("an abort during backoff returns promptly as stopped", async () => {
+  const log = [];
+  // Long backoff, so only the abort can end this quickly.
+  const llm = createGeminiClient({ ...opts({ "busy-model": 503, "spare-model": "ok" }, log), backoffBaseMs: 60_000 });
+  const controller = new AbortController();
+
+  setTimeout(() => controller.abort(), 50);
+  const started = Date.now();
+  const { kind } = await llm.chooseAction("task", STATE, [], { signal: controller.signal });
+
+  assert.equal(kind, "stopped");
+  assert.ok(Date.now() - started < 1000, "abort waited out the backoff");
+  assert.ok(!log.includes("spare-model"), "fell back after an abort");
+});
+
+test("an abort cancels the in-flight request", async () => {
+  const llm = createGeminiClient(opts({ "busy-model": "hang" }));
+  const controller = new AbortController();
+
+  setTimeout(() => controller.abort(), 50);
+  const { kind } = await llm.chooseAction("task", STATE, [], { signal: controller.signal });
+
+  assert.equal(kind, "stopped");
 });

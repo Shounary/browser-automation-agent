@@ -10,10 +10,23 @@ const EXAMPLES = [
   'log in to saucedemo.com with the demo credentials on the page, then name the cheapest product',
 ];
 
+// Headline and hint per outcome kind; the raw reason stays in the timeline.
+const OUTCOMES = {
+  done:         { title: 'Done',                 tone: 'done' },
+  stopped:      { title: 'Stopped',              tone: 'stopped', hint: o => `Stopped after ${o.steps} steps.` },
+  step_limit:   { title: 'Ran out of steps',     tone: 'gave-up', hint: () => 'The agent hit its step limit without finishing. Try a more specific task.' },
+  timeout:      { title: 'Timed out',            tone: 'gave-up', hint: () => 'The run hit its time limit, usually because the model API was slow to answer.' },
+  quota:        { title: 'Model quota used up',  tone: 'gave-up', hint: () => 'The free-tier Gemini quota is exhausted. It resets daily, so try again later.' },
+  model:        { title: 'Model error',          tone: 'gave-up', hint: () => 'The model API returned an error. Details are in the timeline.' },
+  crash:        { title: 'Something broke',      tone: 'gave-up', hint: () => 'The browser or server hit an error. Details are in the timeline.' },
+  disconnected: { title: 'Lost connection',      tone: 'gave-up', hint: () => 'The backend went away mid-run. It reconnects on its own, so start again once the dot is green.' },
+};
+
 export default function Home() {
   const { connected, status, meta, events, screenshot, outcome, start, stop } = useAgentRun();
   const [task, setTask] = useState(EXAMPLES[0]);
-  const running = status === 'running';
+  const running = status === 'running' || status === 'stopping';
+  const stopping = status === 'stopping';
 
   return (
     <main>
@@ -35,8 +48,8 @@ export default function Home() {
             placeholder="Describe a task in plain English"
             disabled={running}
           />
-          <button type="submit" className={running ? 'stop' : 'start'} disabled={!connected}>
-            {running ? 'Stop' : 'Start'}
+          <button type="submit" className={running ? 'stop' : 'start'} disabled={!connected || stopping}>
+            {stopping ? 'Stopping…' : running ? 'Stop' : 'Start'}
           </button>
         </form>
 
@@ -66,7 +79,9 @@ export default function Home() {
             <img src={screenshot} alt="What the agent currently sees" />
           ) : (
             <p className="placeholder">
-              {running ? 'Launching browser…' : 'The live browser view appears here once a run starts.'}
+              {!running
+                ? 'The live browser view appears here once a run starts.'
+                : events.length ? 'Planning the first step…' : 'Launching browser…'}
             </p>
           )}
         </div>
@@ -88,10 +103,19 @@ function StatusBanner({ status, meta, outcome }) {
       </div>
     );
   }
+  if (status === 'stopping') {
+    return (
+      <div className="banner stopped">
+        <span className="spinner" />
+        Stopping…
+      </div>
+    );
+  }
+  const o = OUTCOMES[outcome?.kind] ?? OUTCOMES.crash;
   return (
-    <div className={`banner ${outcome?.ok ? 'done' : 'gave-up'}`}>
-      <strong>{outcome?.ok ? 'Done' : 'Gave up'}</strong>
-      <span className="text">{outcome?.text}</span>
+    <div className={`banner ${o.tone}`}>
+      <strong>{o.title}</strong>
+      <span className="text">{o.hint ? o.hint(outcome) : outcome?.text}</span>
     </div>
   );
 }

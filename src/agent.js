@@ -28,15 +28,15 @@ export async function runTask({
   allowedDomains = ALLOWED_DOMAINS,
   onEvent = () => {},
   screenshots = false,
-  isCancelled = () => false,
+  signal,
 }) {
   const deadline = Date.now() + timeoutMs;
   const history = [];
 
   for (let step = 0; step < maxSteps; step++) {
-    if (isCancelled()) return gaveUp('stopped', step, onEvent);
+    if (signal?.aborted) return stopped(step, onEvent);
     if (Date.now() > deadline) {
-      return gaveUp(`run timeout reached after ${step} steps`, step, onEvent);
+      return gaveUp('timeout', `run timeout reached after ${step} steps`, step, onEvent);
     }
 
     // Re-extract every iteration. Never reuse a map across actions.
@@ -47,13 +47,14 @@ export async function runTask({
       url: state.url,
       title: state.title,
       elements: state.map.length,
-      screenshot: screenshots ? await capture(page) : undefined,
+      // The starting page is blank; keep the UI's placeholder up instead.
+      screenshot: screenshots && state.url !== 'about:blank' ? await capture(page) : undefined,
     });
 
-    const { action, error } = await llm.chooseAction(task, state, history.slice(-HISTORY_WINDOW));
-    if (error) return gaveUp(error, step, onEvent);
-    // The model call is the slow part; a stop pressed during it lands here.
-    if (isCancelled()) return gaveUp('stopped', step, onEvent);
+    const { action, error, kind } = await llm.chooseAction(task, state, history.slice(-HISTORY_WINDOW), { signal });
+    // Checked before `error`: an aborted model call also comes back as one.
+    if (signal?.aborted) return stopped(step, onEvent);
+    if (error) return gaveUp(kind ?? 'model', error, step, onEvent);
 
     onEvent({ type: 'action', step, action });
 
@@ -70,17 +71,20 @@ export async function runTask({
     onEvent({ type: 'result', step, ok: result.ok, message: result.message });
   }
 
-  return gaveUp(`step limit reached (${maxSteps} steps)`, maxSteps, onEvent);
+  return gaveUp('step_limit', `step limit reached (${maxSteps} steps)`, maxSteps, onEvent);
 }
 
 async function capture(page) {
   return page.screenshot(SCREENSHOT).then(b => b.toString('base64')).catch(() => undefined);
 }
 
-function gaveUp(reason, steps, onEvent) {
-  onEvent({ type: 'gave_up', reason });
-  return { status: 'gave_up', reason, steps };
+// kind: 'stopped' | 'timeout' | 'step_limit' | 'quota' | 'model' (server adds 'crash')
+function gaveUp(kind, reason, steps, onEvent) {
+  onEvent({ type: 'gave_up', kind, reason, steps });
+  return { status: 'gave_up', kind, reason, steps };
 }
+
+const stopped = (steps, onEvent) => gaveUp('stopped', `stopped after ${steps} steps`, steps, onEvent);
 
 function isAllowed(rawUrl, allowedDomains) {
   let host;

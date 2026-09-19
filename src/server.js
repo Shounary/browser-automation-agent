@@ -34,7 +34,7 @@ const http = createServer(async (req, res) => {
 
 new WebSocketServer({ server: http }).on('connection', socket => {
   let running = false;
-  let cancelled = false;
+  let controller = null;
   let browser = null;
 
   const send = event => {
@@ -50,7 +50,7 @@ new WebSocketServer({ server: http }).on('connection', socket => {
     }
 
     if (message.type === 'stop') {
-      cancelled = true;
+      controller?.abort();
       return;
     }
 
@@ -61,7 +61,7 @@ new WebSocketServer({ server: http }).on('connection', socket => {
     if (!task) return send({ type: 'error', message: 'task is empty' });
 
     running = true;
-    cancelled = false;
+    controller = new AbortController();
     send({ type: 'status', status: 'running', task, model: llm.model, maxSteps: MAX_STEPS, allowedDomains: ALLOWED_DOMAINS });
 
     try {
@@ -72,13 +72,13 @@ new WebSocketServer({ server: http }).on('connection', socket => {
       const run = await runTask({
         task, page, llm, popups,
         screenshots: true,
-        isCancelled: () => cancelled,
+        signal: controller.signal,
         onEvent: send,
       });
 
       send({ type: 'status', status: run.status, ...run });
     } catch (err) {
-      send({ type: 'gave_up', reason: String(err?.message ?? err) });
+      send({ type: 'gave_up', kind: 'crash', reason: String(err?.message ?? err) });
       send({ type: 'status', status: 'gave_up' });
     } finally {
       await browser?.close().catch(() => {});
@@ -89,7 +89,7 @@ new WebSocketServer({ server: http }).on('connection', socket => {
 
   // A closed tab must not leave a browser running.
   socket.on('close', () => {
-    cancelled = true;
+    controller?.abort();
   });
 });
 

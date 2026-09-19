@@ -44,27 +44,62 @@ test("emits gave_up with a reason at the step limit", async () => {
   });
 
   assert.equal(run.status, "gave_up");
+  assert.equal(run.kind, "step_limit");
   assert.match(run.reason, /step limit reached \(2 steps\)/);
   assert.equal(events.at(-1).type, "gave_up");
+  assert.equal(events.at(-1).kind, "step_limit");
 });
 
-test("stops mid-run when isCancelled goes true", async () => {
+test("passes the model's error kind through to gave_up", async () => {
+  const page = await newPage();
+
+  const run = await runTask({
+    task: "t", page,
+    llm: { model: "fake", async chooseAction() { return { error: "429 quota", kind: "quota" }; } },
+  });
+
+  assert.equal(run.kind, "quota");
+  assert.equal(run.reason, "429 quota");
+});
+
+test("stops mid-run when the signal aborts", async () => {
   const page = await newPage();
   const events = [];
+  const controller = new AbortController();
   let steps = 0;
 
   const run = await runTask({
     task: "t", page,
-    llm: { model: "fake", async chooseAction() { steps++; return { action: { name: "wait", reason: "x" } }; } },
-    isCancelled: () => steps >= 2,
+    llm: { model: "fake", async chooseAction() {
+      if (++steps >= 2) controller.abort();
+      return { action: { name: "wait", reason: "x" } };
+    } },
+    signal: controller.signal,
     onEvent: collect(events),
   });
 
   assert.equal(run.status, "gave_up");
-  assert.equal(run.reason, "stopped");
+  assert.equal(run.kind, "stopped");
   // Cancelled well before MAX_STEPS.
   assert.ok(steps <= 3, `ran ${steps} steps after stop`);
   assert.equal(events.at(-1).type, "gave_up");
+});
+
+test("abort cuts an in-flight model call short", async () => {
+  const page = await newPage();
+  const controller = new AbortController();
+
+  // A model that never answers unless aborted.
+  const hanging = { model: "fake", chooseAction: (_t, _s, _h, { signal }) => new Promise(resolve => {
+    signal.addEventListener("abort", () => resolve({ error: "aborted", kind: "stopped" }));
+  }) };
+
+  setTimeout(() => controller.abort(), 50);
+  const started = Date.now();
+  const run = await runTask({ task: "t", page, llm: hanging, signal: controller.signal });
+
+  assert.equal(run.kind, "stopped");
+  assert.ok(Date.now() - started < 1000, "stop waited on the model");
 });
 
 test("attaches a screenshot to each observe only when asked", async () => {
@@ -73,6 +108,7 @@ test("attaches a screenshot to each observe only when asked", async () => {
   const without = [];
 
   const llm = () => scripted({ name: "done", result: "r", reason: "x" });
+  await page.goto("data:text/html,<h1>hello</h1>");
 
   await runTask({ task: "t", page, llm: llm(), screenshots: true, onEvent: collect(withShots) });
   await runTask({ task: "t", page, llm: llm(), onEvent: collect(without) });
@@ -101,4 +137,17 @@ test("blocks navigation outside the allowlist and keeps going", async () => {
   assert.match(blocked.message, /not an allowed demo site/);
   // A blocked navigation is feedback, not a fatal error.
   assert.equal(run.status, "done");
+});
+
+test("skips the screenshot on the blank starting page", async () => {
+  const page = await newPage();
+  const events = [];
+
+  await runTask({
+    task: "t", page, screenshots: true,
+    llm: scripted({ name: "done", result: "r", reason: "x" }),
+    onEvent: collect(events),
+  });
+
+  assert.equal(events.find(e => e.type === "observe").screenshot, undefined);
 });

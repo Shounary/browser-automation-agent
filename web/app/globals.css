@@ -110,6 +110,7 @@ button.stop  { background: var(--red);  border-color: var(--red);  color: #0d111
 .banner.running  { border-color: var(--blue);  color: var(--blue); }
 .banner.done     { border-color: var(--green); color: var(--green); }
 .banner.gave-up  { border-color: var(--red);   color: var(--red); }
+.banner.stopped  { border-color: var(--dim);   color: var(--dim); }
 
 .spinner {
   width: 11px; height: 11px; flex: none;
@@ -179,6 +180,7 @@ li.fail { color: var(--red);   font-family: var(--mono); font-size: 12px; }
 li.final { padding: 12px 0; font-size: 14px; }
 li.final.done { color: var(--green); }
 li.final.gave-up { color: var(--red); }
+li.final.stopped { color: var(--dim); }
 
 @media (max-width: 1000px) {
   main { height: auto; overflow: visible; }

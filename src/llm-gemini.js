@@ -1,4 +1,4 @@
-// chooseAction(task, state, history) -> { action } | { error }
+// chooseAction(task, state, history, { signal }) -> { action } | { error, kind }
 //
 // One stateless call per step. The conversation is rebuilt from scratch every
 // time, because element ids are only valid for the step they were extracted
@@ -7,6 +7,7 @@
 // Nothing Gemini-shaped escapes this file. `action` is the plain object that
 // page-actions.js already understands, so swapping providers is a one-file job.
 
+import { setTimeout as sleep } from 'node:timers/promises';
 import { GoogleGenAI, FunctionCallingConfigMode } from '@google/genai';
 import { ACTION_DECLARATIONS, ACTION_NAMES, validateAction } from './action-schema.js';
 
@@ -61,10 +62,10 @@ export function createGeminiClient({
   // Sticky: a run drops down the chain but never climbs back up.
   let active = 0;
 
-  const call = async request => {
+  const call = async (request, signal) => {
     for (; ; active++) {
       try {
-        return await callWithBackoff(ai, models[active], request, backoffBaseMs);
+        return await callWithBackoff(ai, models[active], request, backoffBaseMs, signal);
       } catch (err) {
         if (!transientReason(err) || active === models.length - 1) throw err;
         console.error(`  ${models[active]} unavailable — falling back to ${models[active + 1]}`);
@@ -76,7 +77,7 @@ export function createGeminiClient({
     models,
     get model() { return models[active]; },
 
-    async chooseAction(task, state, history) {
+    async chooseAction(task, state, history, { signal } = {}) {
       const corrections = [];
 
       for (let attempt = 0; attempt <= SCHEMA_RETRIES; attempt++) {
@@ -94,12 +95,17 @@ export function createGeminiClient({
                 },
               },
               temperature: 0,
+              // Client-side only: Google still finishes (and may bill) the request.
+              abortSignal: signal,
             },
-          });
+          }, signal);
         } catch (err) {
           // Out of retries, or something not worth retrying. The run ends
           // with a message instead of a stack trace.
-          return { error: `${models[active]} unreachable: ${String(err?.message ?? err).slice(0, 200)}` };
+          return {
+            error: `${models[active]} unreachable: ${String(err?.message ?? err).slice(0, 200)}`,
+            kind: signal?.aborted ? 'stopped' : transientReason(err) === 'rate limited' ? 'quota' : 'model',
+          };
         }
 
         // ANY mode forces a function call, but it does not cap the count at
@@ -154,7 +160,7 @@ function buildPrompt(task, state, history, corrections) {
 }
 
 // Free-tier 429s and capacity 503s both kill a run if they are not retried.
-async function callWithBackoff(ai, model, request, backoffBaseMs) {
+async function callWithBackoff(ai, model, request, backoffBaseMs, signal) {
   for (let attempt = 0; ; attempt++) {
     try {
       return await ai.models.generateContent({ model, ...request });
@@ -164,7 +170,7 @@ async function callWithBackoff(ai, model, request, backoffBaseMs) {
 
       const delay = Math.round(Math.min(backoffBaseMs * 2 ** attempt, BACKOFF_MAX_MS) * (1 + Math.random()));
       console.error(`  ${reason}, retrying in ${delay / 1000}s`);
-      await new Promise(r => setTimeout(r, delay));
+      await sleep(delay, undefined, { signal });
     }
   }
 }
@@ -173,6 +179,7 @@ async function callWithBackoff(ai, model, request, backoffBaseMs) {
 function transientReason(err) {
   // The SDK surfaces the status inconsistently depending on transport, so
   // check the places it shows up rather than one typed field.
+  if (err?.name === 'AbortError') return null;
   const status = err?.status ?? err?.code ?? err?.response?.status;
   const message = String(err?.message ?? err);
 
