@@ -48,6 +48,12 @@ export function useAgentRun() {
           return;
         }
 
+        // The server refused the start; don't sit on the optimistic 'running'.
+        if (event.type === 'error' && statusRef.current === 'running') {
+          setOutcome({ kind: 'crash', text: event.message });
+          setStatus('gave_up');
+        }
+
         if (event.type === 'observe' && event.screenshot) {
           setScreenshot(`data:image/jpeg;base64,${event.screenshot}`);
         }

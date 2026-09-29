@@ -21,7 +21,7 @@ const PORT = Number(process.env.PORT ?? 3001);
 const CLIENT = new URL('./client.html', import.meta.url);
 
 // Fails fast at boot rather than on the first connection.
-const llm = createGeminiClient();
+const { models } = createGeminiClient();
 
 const http = createServer(async (req, res) => {
   if (req.url === '/' || req.url === '/client.html') {
@@ -62,8 +62,11 @@ new WebSocketServer({ server: http }).on('connection', socket => {
 
     running = true;
     controller = new AbortController();
+    // Per run, so one run's fallback doesn't pin every later run to a weaker model.
+    const llm = createGeminiClient();
     send({ type: 'status', status: 'running', task, model: llm.model, maxSteps: MAX_STEPS, allowedDomains: ALLOWED_DOMAINS });
 
+    let final;
     try {
       browser = await chromium.launch();
       const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
@@ -76,15 +79,17 @@ new WebSocketServer({ server: http }).on('connection', socket => {
         onEvent: send,
       });
 
-      send({ type: 'status', status: run.status, ...run });
+      final = { type: 'status', status: run.status, ...run };
     } catch (err) {
       send({ type: 'gave_up', kind: 'crash', reason: String(err?.message ?? err) });
-      send({ type: 'status', status: 'gave_up' });
+      final = { type: 'status', status: 'gave_up' };
     } finally {
       await browser?.close().catch(() => {});
       browser = null;
       running = false;
     }
+    // Only after cleanup, so a Start sent straight back isn't rejected as busy.
+    send(final);
   });
 
   // A closed tab must not leave a browser running.
@@ -95,5 +100,5 @@ new WebSocketServer({ server: http }).on('connection', socket => {
 
 http.listen(PORT, () => {
   console.log(`http://localhost:${PORT}  (open for the test client)`);
-  console.log(`model: ${llm.models.join(' -> ')}`);
+  console.log(`model: ${models.join(' -> ')}`);
 });
