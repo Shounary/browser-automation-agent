@@ -14,6 +14,8 @@ const EXAMPLES = [
 const OUTCOMES = {
   done:         { title: 'Done',                 tone: 'done' },
   stopped:      { title: 'Stopped',              tone: 'stopped', hint: o => `Stopped after ${o.steps} steps.` },
+  busy:         { title: 'Backend busy',         tone: 'stopped' },
+  rate_limited: { title: 'Slow down',            tone: 'stopped' },
   step_limit:   { title: 'Ran out of steps',     tone: 'gave-up', hint: () => 'The agent hit its step limit without finishing. Try a more specific task.' },
   timeout:      { title: 'Timed out',            tone: 'gave-up', hint: () => 'The run hit its time limit, usually because the model API was slow to answer.' },
   quota:        { title: 'Model quota used up',  tone: 'gave-up', hint: () => 'The free-tier Gemini quota is exhausted. It resets daily, so try again later.' },

@@ -4,9 +4,6 @@ Type a task in plain English. An agent drives a real Chromium browser to do it,
 and you watch each step happen live — the page it sees, the action it picked, and
 why.
 
-<!-- TODO: record docs/demo.gif (a full Wikipedia run, ~15s) and uncomment
-![demo](docs/demo.gif)
--->
 
 ```
 "who was Ada Lovelace"
