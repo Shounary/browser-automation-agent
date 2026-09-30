@@ -15,27 +15,23 @@ const SELECTOR = [
 const MAX_PAGE_TEXT = 2000;
 
 export async function extractInteractiveElements(page, { viewportOnly = true } = {}) {
+    // A fixed four round trips per page. Three per element cost 100s on one
+    // Wikipedia step on a 0.1 CPU host.
+    const found = await page.evaluateHandle(collect, { selector: SELECTOR, viewportOnly });
+    const infos = await found.evaluate(f => f.infos);
+    const els = await found.getProperty('els');
+    const handles = [];
+    for (const [i, h] of await els.getProperties()) handles[Number(i)] = h.asElement();
+    await Promise.all([found.dispose(), els.dispose()]);
+
     const map = [];
     const lines = [];
-    const handles = await page.$$(SELECTOR);
-
-    for (const h of handles) {
-        if (!(await h.isVisible())) continue;
-        if (await h.isDisabled().catch(() => false)) continue;
-
-        // One round trip per element. Reading the attributes one at a time
-        // cost six, which on a 250-element page is most of the step latency.
-        const d = await describe(h);
-        if (viewportOnly && !d.inViewport) continue;
-        // An element with no name is not something the model can reason about.
-        if (!d.name) continue;
-
-        const id = map.length;
+    for (const [id, d] of infos.entries()) {
         const extra = (d.role === 'input') ? ` (${d.type})` : "";
         const line = `[${id}] ${d.role} "${d.name}"${extra}`;
 
         // Handles die on navigation
-        map.push({handle: h, line})
+        map.push({handle: handles[id], line})
         lines.push(line);
     }
 
@@ -48,8 +44,17 @@ export async function extractInteractiveElements(page, { viewportOnly = true } =
     };
 }
 
-async function describe(h) {
-  return h.evaluate(el => {
+// Runs in the page, so it can't reference anything else in this module.
+function collect({ selector, viewportOnly }) {
+  const els = [];
+  const infos = [];
+  for (const el of document.querySelectorAll(selector)) {
+    const r = el.getBoundingClientRect();
+    // Same rule as Playwright's isVisible/isDisabled, which this replaces.
+    if (!r.width || !r.height || getComputedStyle(el).visibility === 'hidden') continue;
+    if (el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true') continue;
+    if (viewportOnly && !(r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth)) continue;
+
     const tag = el.tagName.toLowerCase();
     const type = el.getAttribute('type');
 
@@ -76,18 +81,13 @@ async function describe(h) {
       tag === 'a' ? decodeURIComponent(el.getAttribute('href') || '').split(/[/#?]/).filter(Boolean).pop() : null,
       el.getAttribute('name'),
     ].find(c => c && c.trim()) || '';
+    // An element with no name is not something the model can reason about.
+    if (!name.trim()) continue;
 
-    const r = el.getBoundingClientRect();
-
-    return {
-      role,
-      type: type || 'text',
-      name: name.trim().replace(/\s+/g, ' ').slice(0, 60),
-      inViewport:
-        r.bottom > 0 && r.right > 0 &&
-        r.top < window.innerHeight && r.left < window.innerWidth,
-    };
-  });
+    els.push(el);
+    infos.push({ role, type: type || 'text', name: name.trim().replace(/\s+/g, ' ').slice(0, 60) });
+  }
+  return { els, infos };
 }
 
 async function readablePageText(page) {
