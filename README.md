@@ -1,8 +1,7 @@
 # Browser Automation Agent
 
-Type a task in plain English. An agent drives a real Chromium browser to do it,
-and you watch each step happen live — the page it sees, the action it picked, and
-why.
+Type a task in plain English. An agent drives a  Chromium browser to do it,
+and you watch each step happen live.
 
 
 ```
@@ -15,16 +14,6 @@ why.
    machine had applications beyond pure calculation..."
 ```
 
-## The problem
-
-An LLM cannot see a web page. It gets text. So the interesting question in
-browser automation is not "how do I call Playwright" — it is **how do you
-describe a page to a model so that its next click is the right one**, cheaply
-enough to do fifteen times in a row.
-
-That question is what this project is about. The three parts worth reading are
-the [agent loop](src/agent.js), the [page grounding](src/page-extractor.js), and
-the [streaming layer](src/server.js).
 
 ## The loop
 
@@ -168,8 +157,7 @@ the abort path are verified.
 
 ## Known limits
 
-- **Curated sites only**, by design. Working on an arbitrary site is a research
-  problem.
+- **Curated sites only**, by design. Working on an arbitrary site is a future research question.
 - **Free-tier quota is about ten runs a day.** A public deployment needs a paid
   key with a cap and a per-visitor rate limit.
 - **Vision mode is not implemented** — see the writeup above.
