@@ -94,8 +94,7 @@ itself.
 
 ## Streaming
 
-WebSocket, not SSE, because the client needs to talk back: Stop is a message
-from the browser. One run per connection.
+Utilizing WebSocket since the client needs to talk back (One run per connection)
 
 ```
 client -> { type: 'start', task } | { type: 'stop' }
